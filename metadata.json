@@ -1,0 +1,5 @@
+{
+  "name": "HomerAI",
+  "description": "A completely local AI-powered interactive fiction engine for crafting and playing deep, persistent stories.",
+  "requestFramePermissions": []
+}
