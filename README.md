@@ -1,5 +1,5 @@
 <div align="center">
-  <img width="1200" alt="HomerAI Banner" src="https://raw.githubusercontent.com/OzzyRHB/HomerAI/refs/heads/screenshots/homerai.png" />
+  <img width="1200" alt="HomerAI Banner" src="https://github.com/OzzyRHB/HomerAI/blob/screenshots/homerai.png?raw=true" />
 </div>
 
 <br>
