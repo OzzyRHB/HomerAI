@@ -60,7 +60,7 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-const VERSION = '0.5.017';
+const VERSION = '0.5.021';
 
 const DEFAULT_SETTINGS = {
   model: '',
@@ -82,6 +82,8 @@ const DEFAULT_SETTINGS = {
   summaryTokenLimit: 500,
   useSummary: true,
   useDice: false,
+  useCardPlus: true,
+  useCardResolution: true,
 };
 
 const DEFAULT_THEME = {
@@ -1426,18 +1428,53 @@ STORYTELLING GUIDELINES:
         isGenerating: false,
       };
 
-      // Handle Summarization — count real turns (one per AI response)
+      // ── Memory-safe state: 2-turn edit window ──────────────────────────
+      // Exclude the latest 2 AI entries from permanent memory systems (summary,
+      // NPC brains, card resolution) so the player has time to edit AI output
+      // before it gets baked into summary/NPC state. The prompt history in
+      // aiService reads live state.entries, so edits ARE reflected there.
+      const MEMORY_DELAY_TURNS = 2;
+      const recentAiIndices: number[] = [];
+      for (let i = finalState.entries.length - 1; i >= 0 && recentAiIndices.length < MEMORY_DELAY_TURNS; i--) {
+        if (finalState.entries[i].type === 'ai') recentAiIndices.push(i);
+      }
+      const memorySafeEntries = finalState.entries.filter((_, i) => !recentAiIndices.includes(i));
+      const memorySafeState: GameState = { ...finalState, entries: memorySafeEntries };
+
+      // Handle Summarization — SMART TRIGGER
+      // Instead of a rigid turn interval, check how much unsummarized content exists.
+      // Fire early if lots has happened, skip if nothing meaningful has occurred.
+      // The frequency slider now sets the MINIMUM interval between summaries.
       const turnCount = finalState.entries.filter(e => e.type === 'ai').length;
       const summaryFreq = finalState.settings.summaryFrequency || 15;
+      const lastSummaryTurn = (finalState as any)._lastSummaryTurn || 0;
+      const turnsSinceLastSummary = turnCount - lastSummaryTurn;
       
-      if (finalState.settings.useSummary && turnCount > 0 && turnCount % summaryFreq === 0) {
+      // Measure unsummarized content — entries since last summary
+      const unsummarizedEntries = finalState.entries.slice(-(turnsSinceLastSummary * 2 + 1));
+      const unsummarizedLength = unsummarizedEntries.map(e => e.text).join('').length;
+      
+      // Smart conditions:
+      // 1. Minimum interval met (frequency slider) AND some content exists (>500 chars)
+      // 2. OR content overflow — so much happened it can't wait (>4000 chars, min 5 turns)
+      const intervalReached = turnsSinceLastSummary >= summaryFreq && unsummarizedLength > 500;
+      const contentOverflow = unsummarizedLength > 4000 && turnsSinceLastSummary >= 5;
+      
+      if (finalState.settings.useSummary && turnCount > 0 && (intervalReached || contentOverflow)) {
+        const reason = contentOverflow && !intervalReached ? 'content overflow' : `turn interval (${summaryFreq})`;
+        console.log(`[Summary] Running — ${reason}, ${unsummarizedLength} chars unsummarized, ${turnsSinceLastSummary} turns since last`);
         setGameState(prev => prev ? { ...prev, isSummarizing: true } : prev);
-        const newSummary = await summarizeStory(finalState, abortControllerRef.current.signal);
+        const newSummary = await summarizeStory(memorySafeState, abortControllerRef.current.signal);
         finalState = {
           ...finalState,
           summary: newSummary,
-          isSummarizing: false
-        };
+          isSummarizing: false,
+          _lastSummaryTurn: turnCount, // track when we last summarized
+        } as any;
+      } else if (!finalState.settings.useSummary) {
+        console.log('[Summary] Skipped — disabled by toggle');
+      } else if (turnCount > 0 && turnsSinceLastSummary >= summaryFreq && unsummarizedLength <= 500) {
+        console.log(`[Summary] Skipped — interval reached but only ${unsummarizedLength} chars unsummarized (too little content)`);
       }
 
       // Persist advanced beat tracks — detect newly expired beats and write resolutions to cards
@@ -1515,7 +1552,12 @@ STORYTELLING GUIDELINES:
       // Character detection disabled — manual card creation via top-bar button
 
       // Resolve placeholder card names silently in the background.
-      resolveUnknownCards(finalState, abortControllerRef.current?.signal).then(resolved => {
+      // Uses memorySafeState — excludes latest 2 AI entries (edit window).
+      // OPTIMIZATION: pre-check — skip entirely if no unresolved cards exist.
+      const hasUnresolvedCards = finalState.storyCards.some(c => c.isUnresolved);
+      if (finalState.settings.useCardResolution !== false && hasUnresolvedCards) {
+        console.log(`[CardResolution] Running — ${finalState.storyCards.filter(c => c.isUnresolved).length} unresolved card(s)`);
+      resolveUnknownCards(memorySafeState, abortControllerRef.current?.signal).then(resolved => {
         if (resolved.length === 0) return;
         setGameState(prev => ({
           ...prev,
@@ -1530,10 +1572,21 @@ STORYTELLING GUIDELINES:
         setTimeout(() => setCardFlash(false), 1500);
         console.log(`[AutoCards] Resolved ${resolved.length} placeholder card(s)`);
       }).catch(() => {});
+      } else if (!hasUnresolvedCards) {
+        console.log('[CardResolution] Skipped — no unresolved cards');
+      } else {
+        console.log('[CardResolution] Skipped — disabled by toggle');
+      }
 
       // Card+: update NPC brains silently in the background.
+      // Uses memorySafeState — excludes latest 2 AI entries (edit window).
+      // OPTIMIZATION: throttle to every 3 turns — NPC mood doesn't shift every turn.
       // Never awaited — gameplay continues immediately while brains update.
-      updateNpcBrain(finalState).then(brainUpdates => {
+      const BRAIN_UPDATE_INTERVAL = 3;
+      const shouldUpdateBrains = finalState.settings.useCardPlus !== false && turnCount > 0 && turnCount % BRAIN_UPDATE_INTERVAL === 0;
+      if (shouldUpdateBrains) {
+        console.log(`[Card+] Running NPC brain updates (turn ${turnCount}, every ${BRAIN_UPDATE_INTERVAL} turns)`);
+      updateNpcBrain(memorySafeState).then(brainUpdates => {
         if (brainUpdates.length === 0) return;
         setGameState(prev => {
           if (!prev) return prev;
@@ -1544,6 +1597,11 @@ STORYTELLING GUIDELINES:
           return { ...prev, storyCards: updatedCards };
         });
       }).catch(() => {}); // Silent failure — never interrupts gameplay
+      } else if (finalState.settings.useCardPlus === false) {
+        console.log('[Card+] Skipped — disabled by toggle');
+      } else {
+        console.log(`[Card+] Skipped — next update at turn ${Math.ceil((turnCount + 1) / BRAIN_UPDATE_INTERVAL) * BRAIN_UPDATE_INTERVAL}`);
+      }
     } catch (error: any) {
       if (error.name === 'AbortError') {
         console.log("[AI] Generation aborted by user.");
@@ -2580,36 +2638,6 @@ STORYTELLING GUIDELINES:
                 style={{ accentColor: appState.globalTheme.accent }}
               />
             </div>
-            
-            {/* Story Summarization Toggle & Frequency */}
-            <div className="flex items-center justify-between pt-2">
-              <label className="text-[10px] text-stone-500 uppercase font-bold">Enable Summarization</label>
-              <button 
-                onClick={() => setGameState(prev => ({ ...prev, settings: { ...prev.settings, useSummary: !prev.settings.useSummary } }))}
-                className={cn(
-                  "w-10 h-5 rounded-full transition-colors relative bg-stone-800",
-                  currentAdventure.settings.useSummary && "bg-emerald-600"
-                )}
-                style={currentAdventure.settings.useSummary ? { backgroundColor: appState.globalTheme.accent } : {}}
-              >
-                <div className={cn(
-                  "absolute top-1 w-3 h-3 bg-white rounded-full transition-all",
-                  currentAdventure.settings.useSummary ? "left-6" : "left-1"
-                )} />
-              </button>
-            </div>
-            {currentAdventure.settings.useSummary && (
-              <div className="space-y-2">
-                <label className="text-[10px] text-stone-500 uppercase font-bold">Summary Frequency ({currentAdventure.settings.summaryFrequency || 15} turns)</label>
-                <input 
-                  type="range" min="5" max="50" step="1"
-                  value={currentAdventure.settings.summaryFrequency || 15}
-                  onChange={(e) => setGameState(prev => ({ ...prev, settings: { ...prev.settings, summaryFrequency: parseInt(e.target.value) } }))}
-                  className="w-full"
-                  style={{ accentColor: appState.globalTheme.accent }}
-                />
-              </div>
-            )}
           </div>
         </div>
 
@@ -2743,6 +2771,66 @@ STORYTELLING GUIDELINES:
               currentAdventure.settings.useDice ? "left-7" : "left-1"
             )} />
           </button>
+        </div>
+
+        {/* Model Management */}
+        <div className="space-y-4 pt-4 border-t border-stone-800">
+          <h3 className="text-xs uppercase tracking-widest text-stone-500 font-sans font-bold">Background Systems</h3>
+          <p className="text-[10px] text-stone-600">Each enabled system runs an extra AI call per turn. Disable to speed up gameplay.</p>
+          
+          {/* Card+ (NPC Brains) */}
+          <div className="flex items-center justify-between p-3 bg-stone-900/50 border border-stone-800 rounded-xl">
+            <div className="space-y-0.5">
+              <label className="text-[10px] uppercase tracking-widest text-stone-300 font-bold">Card+ (NPC Brains)</label>
+              <p className="text-[10px] text-stone-600">Updates NPC mood, goals & secrets each turn</p>
+            </div>
+            <button 
+              onClick={() => setGameState(prev => ({ ...prev, settings: { ...prev.settings, useCardPlus: !(prev.settings.useCardPlus !== false) } }))}
+              className={cn("w-10 h-5 rounded-full transition-colors relative bg-stone-800")}
+              style={currentAdventure.settings.useCardPlus !== false ? { backgroundColor: appState.globalTheme.accent } : {}}
+            >
+              <div className={cn(
+                "absolute top-1 w-3 h-3 bg-white rounded-full transition-all",
+                currentAdventure.settings.useCardPlus !== false ? "left-6" : "left-1"
+              )} />
+            </button>
+          </div>
+
+          {/* Card Resolution */}
+          <div className="flex items-center justify-between p-3 bg-stone-900/50 border border-stone-800 rounded-xl">
+            <div className="space-y-0.5">
+              <label className="text-[10px] uppercase tracking-widest text-stone-300 font-bold">Auto Card Resolution</label>
+              <p className="text-[10px] text-stone-600">Resolves placeholder card names from beats</p>
+            </div>
+            <button 
+              onClick={() => setGameState(prev => ({ ...prev, settings: { ...prev.settings, useCardResolution: !(prev.settings.useCardResolution !== false) } }))}
+              className={cn("w-10 h-5 rounded-full transition-colors relative bg-stone-800")}
+              style={currentAdventure.settings.useCardResolution !== false ? { backgroundColor: appState.globalTheme.accent } : {}}
+            >
+              <div className={cn(
+                "absolute top-1 w-3 h-3 bg-white rounded-full transition-all",
+                currentAdventure.settings.useCardResolution !== false ? "left-6" : "left-1"
+              )} />
+            </button>
+          </div>
+
+          {/* Summarization */}
+          <div className="flex items-center justify-between p-3 bg-stone-900/50 border border-stone-800 rounded-xl">
+            <div className="space-y-0.5">
+              <label className="text-[10px] uppercase tracking-widest text-stone-300 font-bold">Auto Summarization</label>
+              <p className="text-[10px] text-stone-600">Compresses story every {currentAdventure.settings.summaryFrequency || 15} turns</p>
+            </div>
+            <button 
+              onClick={() => setGameState(prev => ({ ...prev, settings: { ...prev.settings, useSummary: !prev.settings.useSummary } }))}
+              className={cn("w-10 h-5 rounded-full transition-colors relative bg-stone-800")}
+              style={currentAdventure.settings.useSummary ? { backgroundColor: appState.globalTheme.accent } : {}}
+            >
+              <div className={cn(
+                "absolute top-1 w-3 h-3 bg-white rounded-full transition-all",
+                currentAdventure.settings.useSummary ? "left-6" : "left-1"
+              )} />
+            </button>
+          </div>
         </div>
 
         {/* Model Management */}

@@ -95,6 +95,8 @@ export interface GameState {
     summaryTokenLimit: number;
     useSummary: boolean;
     useDice: boolean;
+    useCardPlus: boolean;
+    useCardResolution: boolean;
   };
   theme: {
     background: string;

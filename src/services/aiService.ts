@@ -65,22 +65,26 @@ export async function generateStoryResponse(state: GameState, diceRoll?: number,
   // Cards prefixed with @ are NPC cards. If they have a brain (notes JSON) and
   // appear in recent history, their inner state is fed to the model so it can
   // authentically portray their mood, goals, and secrets.
-  const recentTextForNpcs = state.entries.slice(-5).map(e => e.text).join(' ').toLowerCase();
-  const activeNpcCards = state.storyCards.filter(card => {
-    if (!card.title.startsWith('@') || !card.notes) return false;
-    const name = card.title.replace(/^@/, '').toLowerCase();
-    return recentTextForNpcs.includes(name) ||
-           card.keys.some(k => recentTextForNpcs.includes(k.toLowerCase()));
-  });
-  const npcBrainContext = activeNpcCards.length > 0
-    ? `\nACTIVE NPC INNER STATES (use privately to guide authentic behavior — never reveal directly):\n${activeNpcCards.map(c => {
-        const name = c.title.replace(/^@/, '');
-        try {
-          const brain = JSON.parse(c.notes!);
-          return `[${name}]: ${Object.entries(brain).map(([k, v]) => `${k}: "${v}"`).join(' | ')}`;
-        } catch { return `[${name}]: ${c.notes}`; }
-      }).join('\n')}`
-    : '';
+  // Skipped when Card+ is disabled — saves prompt space and inference time.
+  let npcBrainContext = '';
+  if (settings.useCardPlus !== false) {
+    const recentTextForNpcs = state.entries.slice(-5).map(e => e.text).join(' ').toLowerCase();
+    const activeNpcCards = state.storyCards.filter(card => {
+      if (!card.title.startsWith('@') || !card.notes) return false;
+      const name = card.title.replace(/^@/, '').toLowerCase();
+      return recentTextForNpcs.includes(name) ||
+             card.keys.some(k => recentTextForNpcs.includes(k.toLowerCase()));
+    });
+    npcBrainContext = activeNpcCards.length > 0
+      ? `\nACTIVE NPC INNER STATES (use privately to guide authentic behavior — never reveal directly):\n${activeNpcCards.map(c => {
+          const name = c.title.replace(/^@/, '');
+          try {
+            const brain = JSON.parse(c.notes!);
+            return `[${name}]: ${Object.entries(brain).map(([k, v]) => `${k}: "${v}"`).join(' | ')}`;
+          } catch { return `[${name}]: ${c.notes}`; }
+        }).join('\n')}`
+      : '';
+  }
 
   const systemInstruction = `
 You are an advanced interactive fiction engine. Your goal is to weave a compelling, immersive narrative that evolves based on the player's choices.
@@ -585,10 +589,10 @@ Return ONLY valid JSON array:
 }
 
 // ── Card+: NPC brain updater ─────────────────────────────────────────────
-// Runs silently in the background after each AI response. For every @-prefixed
-// story card whose character appeared in recent history, it fires a secondary AI
-// call to update that NPC's inner mental state JSON (mood, goals, secrets, etc).
-// Results are returned so the caller can patch state — gameplay is never blocked.
+// Runs silently in the background after each AI response (throttled to every
+// 3 turns by the caller). All active NPCs are batched into a SINGLE AI call
+// to minimise inference overhead. Results are returned so the caller can
+// patch state — gameplay is never blocked.
 export async function updateNpcBrain(
   state: GameState,
   signal?: AbortSignal
@@ -615,55 +619,77 @@ export async function updateNpcBrain(
     return [];
   }
 
-  console.log(`[Card+] Updating brains for: ${activeNpcs.map(c => c.title).join(', ')}`);
+  console.log(`[Card+] Batched brain update for: ${activeNpcs.map(c => c.title).join(', ')} (1 AI call)`);
 
-  const updates: { id: string; notes: string }[] = [];
-
-  for (const card of activeNpcs) {
+  // ── Build a single batched prompt for all active NPCs ─────────────────
+  const npcSection = activeNpcs.map(card => {
     const name = card.title.replace(/^@/, '');
-    const existingBrain = card.notes || '{}';
+    return `Character: ${name}\nCurrent inner state: ${card.notes || '{}'}`;
+  }).join('\n\n');
 
-    const prompt = `Character: ${name}
-Current inner state: ${existingBrain}
+  const recentEvents = state.entries.slice(-8).map(e => `${e.type.toUpperCase()}: ${e.text}`).join('\n');
+
+  const prompt = `${npcSection}
 
 Recent story events:
-${state.entries.slice(-8).map(e => `${e.type.toUpperCase()}: ${e.text}`).join('\n')}
+${recentEvents}
 
-Update ${name}'s inner mental state JSON based on these recent events.
-Rules:
-- All values are short single-sentence strings written from ${name}'s 1st person perspective
+Update EACH character's inner mental state based on these recent events.
+Return a JSON object where each KEY is the character's exact name and each VALUE is their updated inner state object.
+
+Rules per character:
+- All values are short single-sentence strings written from that character's 1st person perspective
 - Keys use descriptive lower_snake_case (e.g. current_goal, mood, secret, opinion_of_player)
-- Maximum 8 key-value pairs total — prune outdated entries, add new ones
+- Maximum 8 key-value pairs per character — prune outdated entries, add new ones
 - Always include: mood, current_goal, opinion_of_player
-- Return ONLY a valid JSON object, no markdown, no explanation`;
+- Return ONLY a valid JSON object, no markdown, no explanation
 
-    try {
-      const response = await fetch('/api/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          modelName: model,
-          prompt,
-          systemInstruction: 'You are a psychology simulation engine. Respond ONLY with a valid JSON object. No markdown. No explanation.',
-          temperature: 0.4,
-          maxOutputTokens: 300,
-          memoryTokens: 1024, // Keep context small for brain updates — they don't need full history
-        }),
-        signal,
-      });
-      const data = await response.json();
-      if (data.error) continue;
-      const text = (data.text || '').trim();
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        JSON.parse(jsonMatch[0]); // validate before storing
-        updates.push({ id: card.id, notes: jsonMatch[0] });
-        console.log(`[AI] Brain updated for NPC: ${name}`);
+Example format:
+{
+  "CharacterName": { "mood": "...", "current_goal": "...", "opinion_of_player": "..." },
+  "OtherCharacter": { "mood": "...", "current_goal": "...", "opinion_of_player": "..." }
+}`;
+
+  try {
+    const response = await fetch('/api/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        modelName: model,
+        prompt,
+        systemInstruction: 'You are a psychology simulation engine. Respond ONLY with a valid JSON object containing all characters. No markdown. No explanation.',
+        temperature: 0.4,
+        maxOutputTokens: activeNpcs.length * 250, // scale token budget to NPC count
+        memoryTokens: 1024,
+      }),
+      signal,
+    });
+    const data = await response.json();
+    if (data.error) return [];
+    const text = (data.text || '').trim();
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return [];
+
+    const parsed = JSON.parse(jsonMatch[0]);
+    const updates: { id: string; notes: string }[] = [];
+
+    for (const card of activeNpcs) {
+      const name = card.title.replace(/^@/, '');
+      // Try exact match first, then case-insensitive
+      const brainData = parsed[name] || Object.entries(parsed).find(
+        ([k]) => k.toLowerCase() === name.toLowerCase()
+      )?.[1];
+
+      if (brainData && typeof brainData === 'object') {
+        const brainJson = JSON.stringify(brainData);
+        updates.push({ id: card.id, notes: brainJson });
+        console.log(`[Card+] Brain updated: ${name}`);
       }
-    } catch {
-      // Silent per-NPC failure — never interrupt gameplay
     }
-  }
 
-  return updates;
+    return updates;
+  } catch {
+    // Silent failure — never interrupt gameplay
+    return [];
+  }
 }

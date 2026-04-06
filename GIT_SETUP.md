@@ -1,45 +1,9 @@
 # HomerAI — Git Setup & Management Guide
-## v0.5.017 | Rebranded from QuestForge
+## v0.5.020
 
 ---
 
-## STEP 1: Copy the patched files into your working directory
-
-First, extract the downloaded `HomerAI-v0.5.017` folder contents.
-Then copy everything into your working directory:
-
-```bash
-# Create the working directory if it doesn't exist
-mkdir -p /home/ozzy/ai/HomerAI/homerai_dev
-
-# Copy all patched files into place (from wherever you downloaded them)
-# Adjust the source path to match where you extracted the zip
-cp -r ~/Downloads/HomerAI-v0.5.017/* /home/ozzy/ai/HomerAI/homerai_dev/
-```
-
----
-
-## STEP 2: Initialize git and connect to the new repo
-
-```bash
-cd /home/ozzy/ai/HomerAI/homerai_dev
-```
-
-```bash
-git init
-```
-
-```bash
-git remote add origin https://github.com/OzzyRHB/HomerAI.git
-```
-
-```bash
-git fetch origin
-```
-
----
-
-## STEP 3: First commit & push
+## First time setup
 
 ```bash
 cd /home/ozzy/ai/HomerAI/homerai_dev
@@ -50,72 +14,7 @@ git add -A
 ```
 
 ```bash
-git commit -m "v0.5.017 — HomerAI rebrand + manual cards, VRAM optimization, UI updates"
-```
-
-Since the remote already has a tiny README, you need to either force-push or merge.
-**Option A — Force push (clean start, overwrites the remote README):**
-
-```bash
-git branch -M master
-```
-
-```bash
-git push -u origin master --force
-```
-
-**Option B — Merge with existing README first (safer):**
-
-```bash
-git pull origin master --allow-unrelated-histories
-```
-*(Resolve any merge conflicts if they appear, then:)*
-
-```bash
-git push -u origin master
-```
-
----
-
-## STEP 4: Tag the version
-
-```bash
-cd /home/ozzy/ai/HomerAI/homerai_dev
-```
-
-```bash
-git tag -a v0.5.017 -m "v0.5.017 — HomerAI rebrand + manual cards, VRAM opt, UI updates"
-```
-
-```bash
-git push origin --tags
-```
-
----
-
-## STEP 5: Set up credential store (so you don't re-enter passwords)
-
-```bash
-git config --global credential.helper store
-```
-
-*(Next time you enter your username/token, git remembers it.)*
-
----
-
-## EVERYDAY COMMANDS
-
-### After making changes — commit & push:
-```bash
-cd /home/ozzy/ai/HomerAI/homerai_dev
-```
-
-```bash
-git add -A
-```
-
-```bash
-git commit -m "v0.5.0XX — description of changes"
+git commit -m "v0.5.020 — background system toggles consolidated, skip logging, duplicate toggle removed"
 ```
 
 ```bash
@@ -123,64 +22,41 @@ git push origin master
 ```
 
 ```bash
+git tag -a v0.5.020 -m "v0.5.020 — all background systems toggleable with console feedback"
+```
+
+```bash
 git push origin --tags
 ```
 
-### Pull latest from remote (if edited elsewhere):
+---
+
+## Everyday commands
+
+### Commit & push:
 ```bash
-cd /home/ozzy/ai/HomerAI/homerai_dev
+cd /home/ozzy/ai/HomerAI/homerai_dev && git add -A && git commit -m "description" && git push origin master
 ```
 
+### Push tags:
 ```bash
-git pull origin master
+git push origin --tags
 ```
 
-### Check what's changed:
+### Pull latest:
 ```bash
-cd /home/ozzy/ai/HomerAI/homerai_dev
+cd /home/ozzy/ai/HomerAI/homerai_dev && git pull origin master
 ```
 
+### Check status:
 ```bash
-git status
-```
-
-### View recent commits:
-```bash
-git log --oneline -10
+cd /home/ozzy/ai/HomerAI/homerai_dev && git status
 ```
 
 ---
 
-## INSTALL DEPENDENCIES (first time in the new directory)
+## Run the app
 
 ```bash
-cd /home/ozzy/ai/HomerAI/homerai_dev
+cd /home/ozzy/ai/HomerAI/homerai_dev && npx tsx server.ts
 ```
-
-```bash
-npm install
-```
-
----
-
-## RUN THE APP
-
-```bash
-cd /home/ozzy/ai/HomerAI/homerai_dev
-```
-
-```bash
-npx tsx server.ts
-```
-
-Then open Brave to `http://localhost:3000`
-
----
-
-## IMPORTANT NOTES
-
-- **All git commands use**: `/home/ozzy/ai/HomerAI/homerai_dev`
-- **Old QuestForge repo** at `github.com/OzzyRHB/QuestForge` still exists — you can archive or keep it
-- **Models folder**: Still at `~/models/` — no change needed
-- **Saves**: Existing adventure saves in the old directory will need to be exported (JSON) and re-imported if you want to carry them over
-- **No rebase**: This is a fresh repo — no rebase conflicts to worry about!
