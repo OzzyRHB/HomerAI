@@ -60,7 +60,7 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-const VERSION = '0.5.021';
+const VERSION = '0.5.023';
 
 const DEFAULT_SETTINGS = {
   model: '',
@@ -1885,6 +1885,7 @@ STORYTELLING GUIDELINES:
       scenario.authorsNote,
       ...cards.map(c => c.content),
       ...cards.map(c => c.title),
+      ...cards.map(c => c.keys.join(' ')),
     ];
     const found = new Set<string>();
     fields.forEach(text => {
@@ -1909,6 +1910,7 @@ STORYTELLING GUIDELINES:
         ...c,
         title: replace(c.title),
         content: replace(c.content),
+        keys: c.keys.map(replace),
       })),
     };
   };
@@ -3034,8 +3036,9 @@ STORYTELLING GUIDELINES:
                   <label className="text-[10px] uppercase tracking-widest text-stone-500 font-bold">Target Turn</label>
                   <input
                     type="number" min="1"
-                    value={editingBeat.beat.targetTurn}
-                    onChange={e => setEditingBeat(prev => prev ? { ...prev, beat: { ...prev.beat, targetTurn: parseInt(e.target.value) || 1, actualFireTurn: null } } : null)}
+                    key={`turn-${editingBeat.beat.id}`}
+                    defaultValue={editingBeat.beat.targetTurn}
+                    onChange={e => { const n = parseInt(e.target.value); if (!isNaN(n) && n >= 1) setEditingBeat(prev => prev ? { ...prev, beat: { ...prev.beat, targetTurn: n, actualFireTurn: null } } : null); }}
                     className="w-full bg-stone-800 border border-stone-800 rounded-xl p-3 focus:outline-none text-center font-sans"
                   />
                 </div>
@@ -3043,8 +3046,9 @@ STORYTELLING GUIDELINES:
                   <label className="text-[10px] uppercase tracking-widest text-stone-500 font-bold">± Window</label>
                   <input
                     type="number" min="0"
-                    value={editingBeat.beat.windowSize}
-                    onChange={e => setEditingBeat(prev => prev ? { ...prev, beat: { ...prev.beat, windowSize: parseInt(e.target.value) || 0 } } : null)}
+                    key={`window-${editingBeat.beat.id}`}
+                    defaultValue={editingBeat.beat.windowSize}
+                    onChange={e => { const n = parseInt(e.target.value); if (!isNaN(n) && n >= 0) setEditingBeat(prev => prev ? { ...prev, beat: { ...prev.beat, windowSize: n } } : null); }}
                     className="w-full bg-stone-800 border border-stone-800 rounded-xl p-3 focus:outline-none text-center font-sans"
                   />
                 </div>
@@ -3052,8 +3056,9 @@ STORYTELLING GUIDELINES:
                   <label className="text-[10px] uppercase tracking-widest text-stone-500 font-bold">Foreshadow</label>
                   <input
                     type="number" min="0"
-                    value={editingBeat.beat.foreshadowDistance}
-                    onChange={e => setEditingBeat(prev => prev ? { ...prev, beat: { ...prev.beat, foreshadowDistance: parseInt(e.target.value) || 0 } } : null)}
+                    key={`foreshadow-${editingBeat.beat.id}`}
+                    defaultValue={editingBeat.beat.foreshadowDistance}
+                    onChange={e => { const n = parseInt(e.target.value); if (!isNaN(n) && n >= 0) setEditingBeat(prev => prev ? { ...prev, beat: { ...prev.beat, foreshadowDistance: n } } : null); }}
                     className="w-full bg-stone-800 border border-stone-800 rounded-xl p-3 focus:outline-none text-center font-sans"
                   />
                 </div>
@@ -3254,6 +3259,7 @@ STORYTELLING GUIDELINES:
                     completedAtTurn: null,
                     order: track.beats.length,
                   };
+                  setBeatEditTarget('game');
                   setEditingBeat({ beat: newBeat, trackId: track.id });
                 }}
                 className="p-1 hover:bg-stone-800 rounded text-stone-600 hover:text-stone-300 transition-colors"
@@ -3282,7 +3288,7 @@ STORYTELLING GUIDELINES:
                           borderColor: isActive ? `${sc}55` : '#292524',
                           backgroundColor: isActive ? `${sc}0d` : 'transparent',
                         }}
-                        onClick={() => setEditingBeat({ beat, trackId: track.id })}
+                        onClick={() => { setBeatEditTarget('game'); setEditingBeat({ beat, trackId: track.id }); }}
                       >
                         <div className="w-2 h-2 rounded-full mt-1.5 shrink-0" style={{ backgroundColor: sc }} />
                         <div className="flex-1 min-w-0">
@@ -3778,6 +3784,76 @@ Return ONLY valid JSON.`;
       <AnimatePresence>
         {renderSidebar()}
       </AnimatePresence>
+
+      {/* Placeholder modal — portal so it renders on home/new/game views */}
+      {placeholderModal && createPortal(
+        <div className="fixed inset-0 z-[999] bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
+          <div
+            className="bg-stone-900 border border-stone-700 rounded-2xl p-8 w-full max-w-md shadow-2xl space-y-6"
+            style={{ borderColor: `${appState.globalTheme.accent}44` }}
+          >
+            <div className="space-y-1 text-center">
+              <p className="text-[10px] uppercase tracking-[0.3em] text-stone-500 font-bold">Before your story begins</p>
+              <h2 className="text-xl font-bold text-white">Customize Your Adventure</h2>
+            </div>
+
+            <div className="space-y-4">
+              {placeholderModal.placeholders.map(label => (
+                <div key={label} className="space-y-1.5">
+                  <label className="text-xs uppercase tracking-widest text-stone-400 font-bold block">
+                    {label.replace(/\?$/, '')}
+                  </label>
+                  <input
+                    type="text"
+                    value={placeholderModal.values[label] || ''}
+                    onChange={e => setPlaceholderModal(prev => prev ? ({
+                      ...prev,
+                      values: { ...prev.values, [label]: e.target.value }
+                    }) : null)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') {
+                        const allFilled = placeholderModal.placeholders.every(p => (placeholderModal.values[p] || '').trim());
+                        if (allFilled) {
+                          const filled = applyPlaceholders(placeholderModal.scenario, placeholderModal.values);
+                          placeholderModalRef.current = false;
+                          setPlaceholderModal(null);
+                          _launchFromScenario(filled);
+                        }
+                      }
+                    }}
+                    placeholder={`Enter ${label.replace(/\?$/, '')}...`}
+                    className="w-full bg-stone-800 border border-stone-700 rounded-xl px-4 py-3 text-white text-sm font-sans placeholder-stone-600 focus:outline-none focus:border-stone-500 transition-colors"
+                    autoFocus={placeholderModal.placeholders.indexOf(label) === 0}
+                  />
+                </div>
+              ))}
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => { placeholderModalRef.current = false; setPlaceholderModal(null); }}
+                className="flex-1 py-3 rounded-xl border border-stone-700 text-stone-400 text-xs uppercase tracking-widest font-bold hover:bg-stone-800 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  const filled = applyPlaceholders(placeholderModal.scenario, placeholderModal.values);
+                  placeholderModalRef.current = false;
+                  setPlaceholderModal(null);
+                  _launchFromScenario(filled);
+                }}
+                disabled={!placeholderModal.placeholders.every(p => (placeholderModal.values[p] || '').trim())}
+                className="flex-1 py-3 rounded-xl text-white text-xs uppercase tracking-widest font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed hover:brightness-110"
+                style={{ backgroundColor: appState.globalTheme.accent }}
+              >
+                Begin
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
     </>
   );
 
@@ -5561,75 +5637,6 @@ Return ONLY valid JSON.`;
         />
       )}
 
-      {/* ── Placeholder Modal — rendered via portal to escape all stacking contexts ── */}
-      {placeholderModal && createPortal(
-        <div className="fixed inset-0 z-[999] bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
-          <div
-            className="bg-stone-900 border border-stone-700 rounded-2xl p-8 w-full max-w-md shadow-2xl space-y-6"
-            style={{ borderColor: `${appState.globalTheme.accent}44` }}
-          >
-            <div className="space-y-1 text-center">
-              <p className="text-[10px] uppercase tracking-[0.3em] text-stone-500 font-bold">Before your story begins</p>
-              <h2 className="text-xl font-bold text-white">Customize Your Adventure</h2>
-            </div>
-
-            <div className="space-y-4">
-              {placeholderModal.placeholders.map(label => (
-                <div key={label} className="space-y-1.5">
-                  <label className="text-xs uppercase tracking-widest text-stone-400 font-bold block">
-                    {label}
-                  </label>
-                  <input
-                    type="text"
-                    value={placeholderModal.values[label] || ''}
-                    onChange={e => setPlaceholderModal(prev => prev ? ({
-                      ...prev,
-                      values: { ...prev.values, [label]: e.target.value }
-                    }) : null)}
-                    onKeyDown={e => {
-                      if (e.key === 'Enter') {
-                        const allFilled = placeholderModal.placeholders.every(p => (placeholderModal.values[p] || '').trim());
-                        if (allFilled) {
-                          const filled = applyPlaceholders(placeholderModal.scenario, placeholderModal.values);
-                          placeholderModalRef.current = false;
-                          setPlaceholderModal(null);
-                          _launchFromScenario(filled);
-                        }
-                      }
-                    }}
-                    placeholder={`Enter ${label}...`}
-                    className="w-full bg-stone-800 border border-stone-700 rounded-xl px-4 py-3 text-white text-sm font-sans placeholder-stone-600 focus:outline-none focus:border-stone-500 transition-colors"
-                    autoFocus={placeholderModal.placeholders.indexOf(label) === 0}
-                  />
-                </div>
-              ))}
-            </div>
-
-            <div className="flex gap-3">
-              <button
-                onClick={() => { placeholderModalRef.current = false; setPlaceholderModal(null); }}
-                className="flex-1 py-3 rounded-xl border border-stone-700 text-stone-400 text-xs uppercase tracking-widest font-bold hover:bg-stone-800 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => {
-                  const filled = applyPlaceholders(placeholderModal.scenario, placeholderModal.values);
-                  placeholderModalRef.current = false;
-                  setPlaceholderModal(null);
-                  _launchFromScenario(filled);
-                }}
-                disabled={!placeholderModal.placeholders.every(p => (placeholderModal.values[p] || '').trim())}
-                className="flex-1 py-3 rounded-xl text-white text-xs uppercase tracking-widest font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed hover:brightness-110"
-                style={{ backgroundColor: appState.globalTheme.accent }}
-              >
-                Begin
-              </button>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
     </div>
   );
 }
