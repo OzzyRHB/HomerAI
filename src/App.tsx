@@ -60,7 +60,7 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-const VERSION = '0.5.023';
+const VERSION = '0.5.025';
 
 const DEFAULT_SETTINGS = {
   model: '',
@@ -875,6 +875,26 @@ Recent events: ${state.entries.slice(-10).map((e: any) => e.text).join(' ').slic
   // Load app state on mount
   useEffect(() => {
     fetchData().then(() => {
+      // Restore nav state AFTER data is loaded so adventures/scenarios exist
+      try {
+        const saved = localStorage.getItem('homerai_nav');
+        if (saved) {
+          const nav = JSON.parse(saved);
+          // Restore view — the guard `if (!currentAdventure) setView(home)`
+          // handles the case where an adventure no longer exists.
+          if (nav.view && ['home', 'new', 'game'].includes(nav.view)) {
+            setView(nav.view);
+          }
+          if (nav.editingId) setEditingId(nav.editingId);
+          if (nav.editingType) setEditingType(nav.editingType);
+          if (nav.newAdventure && typeof nav.newAdventure === 'object') {
+            // Merge saved form state — keeps image blank (stripped on save)
+            setNewAdventure(prev => ({ ...prev, ...nav.newAdventure, image: '' }));
+          }
+        }
+      } catch (e) {
+        // Corrupt save — ignore
+      }
       setTimeout(() => {
         isInitialLoad.current = false;
       }, 500);
@@ -1037,6 +1057,26 @@ STORYTELLING GUIDELINES:
     settings: DEFAULT_SETTINGS,
     theme: DEFAULT_THEME,
   });
+
+  // Persist nav state so tab-switching / focus-loss doesn't lose your place.
+  // Placed here so it runs AFTER newAdventure useState is declared.
+  // Image is stripped to avoid localStorage quota errors.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      try {
+        const { image: _img, ...newAdventureNoImage } = newAdventure as any;
+        localStorage.setItem('homerai_nav', JSON.stringify({
+          view,
+          editingId,
+          editingType,
+          newAdventure: newAdventureNoImage,
+        }));
+      } catch (e) {
+        // Quota exceeded — skip silently
+      }
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [view, editingId, editingType, newAdventure]);
 
   const updatePlotEssentialInNew = (text: string) => {
     setNewAdventure(prev => ({
@@ -1835,6 +1875,8 @@ STORYTELLING GUIDELINES:
     });
     setEditingId(null);
     setEditingType(null);
+    // Clear persisted nav so a fresh start is clean
+    try { localStorage.removeItem('homerai_nav'); } catch (_) {}
   };
 
   const startAdventure = async (adventure: GameState) => {
@@ -3785,6 +3827,33 @@ Return ONLY valid JSON.`;
         {renderSidebar()}
       </AnimatePresence>
 
+      {/* Global loading overlay — shown whenever a model is being loaded */}
+      <AnimatePresence>
+        {isLoadingModel && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[500] bg-black/95 backdrop-blur-sm flex flex-col items-center justify-center space-y-8"
+          >
+            <div className="relative flex items-center justify-center">
+              <div
+                className="absolute w-24 h-24 rounded-full animate-ping opacity-10"
+                style={{ backgroundColor: appState.globalTheme.accent }}
+              />
+              <Loader2
+                className="w-14 h-14 animate-spin relative z-10"
+                style={{ color: appState.globalTheme.accent }}
+              />
+            </div>
+            <div className="text-center space-y-2">
+              <h3 className="text-xl font-bold text-white uppercase tracking-[0.2em]">Loading Model</h3>
+              <p className="text-stone-500 text-sm font-sans">Preparing the neural engine for your journey...</p>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Placeholder modal — portal so it renders on home/new/game views */}
       {placeholderModal && createPortal(
         <div className="fixed inset-0 z-[999] bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
@@ -5286,20 +5355,6 @@ Return ONLY valid JSON.`;
 
       <div className="relative z-10 flex flex-1 overflow-hidden">
         <AnimatePresence mode="wait">
-          {isLoadingModel && (
-          <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-sm flex flex-col items-center justify-center space-y-6"
-          >
-            <Loader2 className="w-12 h-12 animate-spin" style={{ color: appState.globalTheme.accent }} />
-            <div className="text-center space-y-2">
-              <h3 className="text-xl font-bold text-white uppercase tracking-[0.2em]">Loading AI Model</h3>
-              <p className="text-stone-500 text-sm font-sans">Preparing the neural engine for your journey...</p>
-            </div>
-          </motion.div>
-        )}
       </AnimatePresence>
 
       {renderSidebar()}
