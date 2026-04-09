@@ -1,5 +1,5 @@
 <div align="center">
-  <img width="1200" alt="HomerAI Banner" src="https://raw.githubusercontent.com/OzzyRHB/HomerAI/screenshots/screenshots/homerai.png" />
+  <img width="1200" alt="HomerAI Banner" src="https://github.com/OzzyRHB/HomerAI/blob/screenshots/homerai.png?raw=true" />
 </div>
 
 <br>
@@ -8,7 +8,7 @@
   <h1>HomerAI</h1>
   <p><strong>Create and play elaborate AI-generated stories and adventures — fully local, fully yours.</strong></p>
   <p>
-    <img src="https://img.shields.io/badge/version-0.5.015-orange" />
+    <img src="https://img.shields.io/badge/version-0.5.021-orange" />
     <img src="https://img.shields.io/badge/platform-Linux%20%7C%20Windows-blue" />
     <img src="https://img.shields.io/badge/AI-local%20only-green" />
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" />
